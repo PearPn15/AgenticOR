@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "pybind11>=2.12.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desktop-agent-or"
+version = "0.1.0"
+description = "OS-Native Multi-Agent Orchestrator combining C++ Operations Research and LLM Agents"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6.0",
+    "psutil>=5.9.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pybind11>=2.12.0",
+    "cmake>=3.28.0",
+    "ninja>=1.11.0",
+]
+# Real BrowserWorker automation. Optional and heavy (~200MB browser binary)
+# on purpose - agentic_or/workers/browser_worker.py works without it (falls
+# back to the original simulated behavior with a one-time warning), so
+# LOCAL/API-only usage never pays this cost. After installing this extra,
+# also run: uv run playwright install chromium
+browser = [
+    "playwright>=1.40.0",
+]
+
+[project.scripts]
+agentic-or = "agentic_or.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentic_or*"]
+

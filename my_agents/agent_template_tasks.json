@@ -1,0 +1,18 @@
+[
+  {
+    "task_id": "t1",
+    "name": "Say hi",
+    "workload_type": "LOCAL",
+    "estimated_duration_ms": 100,
+    "ram_mb": 20,
+    "metadata": { "message": "hello agentor" }
+  },
+  {
+    "task_id": "t2",
+    "name": "Say something else",
+    "workload_type": "LOCAL",
+    "estimated_duration_ms": 100,
+    "ram_mb": 20,
+    "metadata": { "message": "this is my custom agent" }
+  }
+]

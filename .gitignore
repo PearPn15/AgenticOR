@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# --- Compiled C++ extension (built at install time from src/) ---
+*.so
+*.dylib
+*.pyd
+CMakeCache.txt
+CMakeFiles/
+
+# --- Tooling ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+.DS_Store
+
+# --- Local-only: development scaffolding, not part of the distributed framework ---
+Pipeline.md
+demo.py
+sample_tasks.json
+tests/
+
+# --- Runtime state written by the orchestrator ---
+.agentic_or/
+my_agents/generated_pipeline.json
+
+# Internal development history, not part of the published framework
+CHANGELOG.md

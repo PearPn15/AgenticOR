@@ -1,0 +1,32 @@
+[
+  {
+    "task_id": "crawl_1",
+    "name": "Crawl topic A",
+    "workload_type": "BROWSER",
+    "estimated_duration_ms": 100,
+    "metadata": { "topic": "operations research" }
+  },
+  {
+    "task_id": "process_1",
+    "name": "Process crawl_1's output",
+    "workload_type": "LOCAL",
+    "estimated_duration_ms": 100,
+    "predecessors": ["crawl_1"],
+    "metadata": { "read_from": "crawl_1" }
+  },
+  {
+    "task_id": "crawl_2",
+    "name": "Crawl topic B",
+    "workload_type": "BROWSER",
+    "estimated_duration_ms": 100,
+    "metadata": { "topic": "multi-agent systems" }
+  },
+  {
+    "task_id": "process_2",
+    "name": "Process crawl_2's output",
+    "workload_type": "LOCAL",
+    "estimated_duration_ms": 100,
+    "predecessors": ["crawl_2"],
+    "metadata": { "read_from": "crawl_2" }
+  }
+]

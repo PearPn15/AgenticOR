@@ -1,0 +1,26 @@
+[
+  {
+    "task_id": "fetch_example",
+    "name": "Fetch example.com",
+    "workload_type": "API",
+    "estimated_duration_ms": 400,
+    "ram_mb": 60,
+    "metadata": { "url": "https://example.com" }
+  },
+  {
+    "task_id": "fetch_httpbin",
+    "name": "Fetch httpbin.org",
+    "workload_type": "API",
+    "estimated_duration_ms": 400,
+    "ram_mb": 60,
+    "metadata": { "url": "https://httpbin.org/html" }
+  },
+  {
+    "task_id": "fetch_wikipedia",
+    "name": "Fetch Wikipedia main page",
+    "workload_type": "API",
+    "estimated_duration_ms": 600,
+    "ram_mb": 60,
+    "metadata": { "url": "https://www.wikipedia.org" }
+  }
+]
