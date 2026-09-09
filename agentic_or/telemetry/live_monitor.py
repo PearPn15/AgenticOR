@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TextIO, Tuple
 
+from agentic_or import theme
+
 if TYPE_CHECKING:
     from agentic_or.orchestrator import Orchestrator
 
@@ -78,37 +80,37 @@ _CHATTY_LOGGERS = (
 )
 
 
-def _bar(ratio: float, width: int = 20) -> str:
-    ratio = max(0.0, min(1.0, ratio))
-    filled = int(round(ratio * width))
-    return "█" * filled + "░" * (width - filled)
-
-
-def format_agents_table(orchestrator: "Orchestrator") -> str:
+def format_agents_table(orchestrator: "Orchestrator", enabled: bool = None) -> str:
     """
     Read-only: one row per Agent/Worker (id, type, busy/idle, current task_id).
     Shared by the `agents` CLI/REPL command and the LiveMonitor dashboard, so
     both always show the exact same view of "how many Agents are running".
     """
+    if enabled is None:
+        enabled = theme.color_enabled()
     workers = list(orchestrator.local_workers) + list(orchestrator.api_workers) + list(orchestrator.browser_workers)
     busy = sum(1 for w in workers if w.is_busy)
     idle = len(workers) - busy
 
-    id_w = max([len(w.worker_id) for w in workers] + [len("WORKER ID")])
-    type_w = max(len("BROWSER"), len("TYPE"))
+    title = (
+        f"AGENTS  ({len(workers)} total · "
+        f"{theme.paint(f'{busy} running', theme.GREEN, enabled=enabled)} · "
+        f"{theme.paint(f'{idle} idle', theme.GRAY, enabled=enabled)})"
+    )
+    if not workers:
+        return title
 
-    sep = "─" * 66
-    lines = [
-        sep,
-        f"  AGENTS   ({len(workers)} total · {busy} running · {idle} idle)",
-        sep,
-        f"  {'WORKER ID':<{id_w}}  {'TYPE':<{type_w}}  STATUS   CURRENT TASK",
+    rows = [
+        [
+            w.worker_id,
+            w.workload_type.value,
+            theme.paint("● busy", theme.GREEN, enabled=enabled) if w.is_busy
+            else theme.paint("○ idle", theme.GRAY, enabled=enabled),
+            w.current_task_id or theme.paint("-", theme.GRAY, enabled=enabled),
+        ]
+        for w in workers
     ]
-    for w in workers:
-        status = "● busy" if w.is_busy else "○ idle"
-        task = w.current_task_id or "-"
-        lines.append(f"  {w.worker_id:<{id_w}}  {w.workload_type.value:<{type_w}}  {status:<7}  {task}")
-    lines.append(sep)
+    lines = [title] + theme.table(["WORKER ID", "TYPE", "STATUS", "CURRENT TASK"], rows, enabled=enabled)
     return "\n".join(lines)
 
 
@@ -234,32 +236,43 @@ class LiveMonitor:
         locked_sessions = orch.auth_manager.list_locked_out_sessions()
 
         now_str = time.strftime("%H:%M:%S")
-        sep = "=" * 70
-        dash = "-" * 70
+        en = theme.color_enabled(self.stream)
+        width = 70
+        profile_color = {
+            "TURBO_SPEED": theme.CYAN, "BALANCED": theme.GRAY, "ECO_SILENT": theme.YELLOW,
+        }.get(profile.value, theme.GRAY)
 
-        lines = [
-            sep,
-            f"  AGENTOR LIVE MONITOR{'':<20}{now_str}   Profile: {profile.value}",
-            sep,
-            f"  RAM     [{_bar(snapshot.ram_free_ratio)}] {snapshot.ram_free_ratio * 100:5.1f}% free "
-            f"({snapshot.ram_free_mb:.0f}/{snapshot.ram_total_mb:.0f} MB)",
-            f"  CPU     [{_bar(snapshot.cpu_percent / 100.0)}] {snapshot.cpu_percent:5.1f}%",
-            f"  Battery [{_bar(snapshot.battery_percent / 100.0)}] {snapshot.battery_percent:5.1f}% "
-            f"({'charging' if snapshot.is_charging else 'on battery'})",
-            f"  Temp    {snapshot.cpu_temperature_c:.1f}°C     429/403 rate: {snapshot.error_rate_429 * 100:.1f}%",
-            dash,
-            f"  Tasks    total={total}  pending={pending}  running={running}  "
-            f"completed={completed}  failed={failed}",
-            dash,
-            f"  Self-Healing   Circuit-broken domains: {len(blocked_domains)}"
-            + (f" {list(blocked_domains.keys())}" if blocked_domains else ""),
-            f"                 Captcha/2FA pending: {len(pending_challenges)}   "
-            f"Locked-out sessions: {len(locked_sessions)}",
-            sep,
-        ]
+        lines = theme.header("AGENTOR LIVE MONITOR", now_str, width=width, enabled=en)
+        lines.append(theme.panel_line(
+            f"Profile: {theme.paint(profile.value, theme.BOLD, profile_color, enabled=en)}", width, en))
+        lines.append(theme.divider(width, enabled=en))
+        lines.append(theme.panel_line(
+            f"RAM     [{theme.bar(snapshot.ram_free_ratio, enabled=en)}] {snapshot.ram_free_ratio * 100:5.1f}% free "
+            f"({snapshot.ram_free_mb:.0f}/{snapshot.ram_total_mb:.0f} MB)", width, en))
+        lines.append(theme.panel_line(
+            f"CPU     [{theme.bar(snapshot.cpu_percent / 100.0, invert=True, enabled=en)}] {snapshot.cpu_percent:5.1f}%", width, en))
+        lines.append(theme.panel_line(
+            f"Battery [{theme.bar(snapshot.battery_percent / 100.0, enabled=en)}] {snapshot.battery_percent:5.1f}% "
+            f"({'charging' if snapshot.is_charging else 'on battery'})", width, en))
+        lines.append(theme.panel_line(
+            f"Temp    {snapshot.cpu_temperature_c:.1f}°C     429/403 rate: {snapshot.error_rate_429 * 100:.1f}%",
+            width, en))
+        lines.append(theme.divider(width, enabled=en))
+        lines.append(theme.panel_line(
+            f"Tasks    total={total}  pending={pending}  running={theme.paint(str(running), theme.GREEN, enabled=en)}  "
+            f"completed={theme.paint(str(completed), theme.GREEN, enabled=en)}  "
+            f"failed={theme.paint(str(failed), theme.RED, enabled=en) if failed else failed}", width, en))
+        lines.append(theme.divider(width, enabled=en))
+        lines.append(theme.panel_line(
+            "Self-Healing   Circuit-broken domains: " + str(len(blocked_domains))
+            + (f" {list(blocked_domains.keys())}" if blocked_domains else ""), width, en))
+        lines.append(theme.panel_line(
+            f"               Captcha/2FA pending: {len(pending_challenges)}   "
+            f"Locked-out sessions: {len(locked_sessions)}", width, en))
+        lines.append(theme.footer(width, enabled=en))
 
         if self.render_to_terminal:
-            out = "\n".join(lines) + "\n" + format_agents_table(orch) + "\n"
+            out = "\n".join(lines) + "\n" + format_agents_table(orch, enabled=en) + "\n"
             if self._is_tty:
                 self.stream.write(_CLEAR_HOME)
             self.stream.write(out)

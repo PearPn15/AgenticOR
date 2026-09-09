@@ -12,74 +12,72 @@ drifts between `agentic-or demo` and typing `demo` inside the shell.
 from __future__ import annotations
 
 import argparse
-import os
 import shlex
 import sys
+
+from agentic_or import theme
 
 try:
     import readline  # noqa: F401  (POSIX only; enables history + line-editing for input())
 except ImportError:
     pass
 
-_CYAN = "\x1b[38;5;51m"
-_DIM = "\x1b[2m"
-_BOLD = "\x1b[1m"
-_RESET = "\x1b[0m"
-
 _EXIT_WORDS = {"exit", "quit", "q", ":q"}
 _HELP_WORDS = {"help", "menu", "?"}
 _CLEAR_WORDS = {"clear", "cls"}
 
-# (command line to show, description) - kept in sync with build_parser() in cli.py.
-_MENU_ROWS = [
-    ("status [--watch]", "View / watch system telemetry (RAM, CPU, battery, temperature)"),
-    ("run <file.json> [--monitor] [--fresh]", "Run a DAG pipeline from a task JSON file"),
-    ("demo [--monitor]", "Run the built-in 11-task DAG demo (GitHub + HuggingFace)"),
-    ("llm --provider <name>", "Run the real multi-agent LLM pipeline (mock/gemini/openai/groq/...)"),
-    ("agents", "Show Agents running RIGHT NOW (real-time)"),
-    ("agents add <file.py> [--persist]", "Plug in your own BaseWorker subclass (session-only, or permanent)"),
-    ("agents persisted", "List agents saved with 'agents add --persist'"),
-    ("agents reset [--persist]", "Drop custom agents (add --persist to also forget saved ones)"),
-    ("history", "Show summaries of runs already completed in this session"),
-    ("watch", "Watch ANOTHER agentic-or process's live run, from this terminal"),
-    ("ui [--port N] [--no-browser]", "Open a lightweight local web dashboard (browser-based watch)"),
-    ("clear", "Clear the screen"),
-    ("help", "Show this menu"),
-    ("exit / quit", "Exit the AgentOR shell"),
+# (section title, [(command line to show, description), ...]) - kept in sync
+# with build_parser() in cli.py.
+_MENU_SECTIONS = [
+    ("Run", [
+        ("run <file.json> [--monitor] [--fresh]", "Run a DAG pipeline from a task JSON file"),
+        ("demo [--monitor]", "Run the built-in 11-task DAG demo (GitHub + HuggingFace)"),
+        ("llm --provider <name>", "Run the real multi-agent LLM pipeline (mock/gemini/openai/groq/...)"),
+    ]),
+    ("Agents", [
+        ("agents", "Show Agents running RIGHT NOW (real-time)"),
+        ("agents add <file.py> [--persist]", "Plug in your own BaseWorker subclass (session-only, or permanent)"),
+        ("agents persisted", "List agents saved with 'agents add --persist'"),
+        ("agents reset [--persist]", "Drop custom agents (add --persist to also forget saved ones)"),
+    ]),
+    ("Observe", [
+        ("status [--watch]", "View / watch system telemetry (RAM, CPU, battery, temperature)"),
+        ("history", "Show summaries of runs already completed in this session"),
+        ("watch", "Watch ANOTHER agentic-or process's live run, from this terminal"),
+        ("ui [--port N] [--no-browser]", "Open a lightweight local web dashboard (browser-based watch)"),
+    ]),
+    ("Shell", [
+        ("clear", "Clear the screen"),
+        ("help", "Show this menu"),
+        ("exit / quit", "Exit the AgentOR shell"),
+    ]),
 ]
 
 
-def _use_color(stream) -> bool:
-    if os.environ.get("NO_COLOR") is not None:
-        return False
-    return bool(getattr(stream, "isatty", lambda: False)())
-
-
 def _print_menu() -> None:
-    color = _use_color(sys.stdout)
-    width = max(len(cmd) for cmd, _ in _MENU_ROWS) + 2
-    sep = "─" * 62
-    lines = [sep, "  Available commands (type directly, with or without a leading '/'):", sep]
-    for cmd, desc in _MENU_ROWS:
-        lines.append(f"  {cmd:<{width}} {desc}")
-    lines.append(sep)
-    text = "\n".join(lines)
-    if color:
-        print(f"{_DIM}{text}{_RESET}")
-    else:
-        print(text)
+    en = theme.color_enabled(sys.stdout)
+    cmd_w = max(len(cmd) for _, rows in _MENU_SECTIONS for cmd, _ in rows) + 1
+    width = cmd_w + 44
+    print(theme.rule(width, enabled=en))
+    print(theme.paint("  Commands  (type directly, with or without a leading '/')", theme.BOLD, enabled=en))
+    for section, rows in _MENU_SECTIONS:
+        print(theme.rule(width, enabled=en))
+        print(theme.paint(f"  {section}", theme.DIM, enabled=en))
+        for cmd, desc in rows:
+            print(f"  {theme.paint(theme.pad(cmd, cmd_w), theme.CYAN, enabled=en)} {desc}")
+    print(theme.rule(width, enabled=en))
 
 
 def _prompt(color: bool) -> str:
     if color:
-        return f"{_BOLD}{_CYAN}AgentOR{_RESET} › "
+        return f"{theme.BOLD}{theme.CYAN}AgentOR{theme.RESET} › "
     return "AgentOR > "
 
 
 def run_repl(parser: argparse.ArgumentParser) -> None:
     """Persistent interactive shell. Reuses `parser` for every line typed."""
-    color = _use_color(sys.stdout)
-    print(f"{_DIM}Type help to see the menu, exit to quit (no quotes needed).{_RESET}\n" if color
+    color = theme.color_enabled(sys.stdout)
+    print(f"{theme.DIM}Type help to see the menu, exit to quit (no quotes needed).{theme.RESET}\n" if color
           else "Type help to see the menu, exit to quit (no quotes needed).\n")
 
     prompt = _prompt(color)
@@ -118,7 +116,15 @@ def run_repl(parser: argparse.ArgumentParser) -> None:
             _print_menu()
             continue
         if len(tokens) == 1 and head in _CLEAR_WORDS:
-            sys.stdout.write("\x1b[H\x1b[2J")
+            # \x1b[H\x1b[2J alone only erases the visible viewport - most
+            # modern terminals (iTerm2, GNOME Terminal, Windows Terminal,
+            # VS Code, kitty, ...) respond to that by shoving the old
+            # content into scrollback rather than actually discarding it,
+            # so it visually looks like everything just scrolled up. \x1b[3J
+            # (xterm's "erase scrollback" extension, widely supported) is
+            # what makes this an actual clear, matching what `clear`/Ctrl+L
+            # does in a modern shell.
+            sys.stdout.write("\x1b[H\x1b[2J\x1b[3J")
             sys.stdout.flush()
             continue
 

@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Type
 
+from agentic_or import theme
 from agentic_or.banner import print_banner
 from agentic_or.broker.local_queue import AsyncLocalBroker
 from agentic_or.models import TaskNode, WorkloadType
@@ -293,16 +294,24 @@ def _print_status_snapshot(monitor: SystemTelemetryMonitor, clear: bool = False)
     snap = monitor.capture_snapshot()
     if clear:
         sys.stdout.write("\x1b[H\x1b[2J")
-    print("=" * 60)
-    print("       🖥️  DESKTOP-AGENT-OR: SYSTEM TELEMETRY" + ("   (watching, Ctrl+C to stop)" if clear else ""))
-    print("=" * 60)
-    print(f"  • RAM Available  : {snap.ram_free_mb:.1f} MB / {snap.ram_total_mb:.1f} MB ({snap.ram_free_ratio * 100:.1f}%)")
-    print(f"  • CPU Load       : {snap.cpu_load_1m * 100:.1f}%")
-    print(f"  • CPU Usage      : {snap.cpu_percent:.1f}%")
-    print(f"  • Battery Level  : {snap.battery_percent:.1f}% (Charging: {snap.is_charging})")
-    print(f"  • SoC Temperature: {snap.cpu_temperature_c:.1f}°C")
-    print(f"  • Bandit Feature : {snap.to_bandit_feature_vector()}")
-    print("=" * 60)
+    en = theme.color_enabled(sys.stdout)
+    width = 62
+    tag = "watching, Ctrl+C to stop" if clear else ""
+    lines = theme.header("SYSTEM TELEMETRY", tag, width=width, enabled=en)
+    lines.append(theme.panel_line(
+        f"RAM     [{theme.bar(snap.ram_free_ratio, width=14, enabled=en)}] {snap.ram_free_ratio * 100:5.1f}% free "
+        f"({snap.ram_free_mb:.0f}/{snap.ram_total_mb:.0f} MB)", width, en))
+    lines.append(theme.panel_line(
+        f"CPU     [{theme.bar(snap.cpu_percent / 100.0, width=14, invert=True, enabled=en)}] {snap.cpu_percent:5.1f}% "
+        f"(load {snap.cpu_load_1m * 100:.1f}%)", width, en))
+    lines.append(theme.panel_line(
+        f"Battery [{theme.bar(snap.battery_percent / 100.0, width=14, enabled=en)}] {snap.battery_percent:5.1f}% "
+        f"({'charging' if snap.is_charging else 'on battery'})", width, en))
+    lines.append(theme.panel_line(f"Temp    {snap.cpu_temperature_c:.1f}°C", width, en))
+    lines.append(theme.divider(width, enabled=en))
+    lines.append(theme.panel_line(f"Bandit feature vector: {snap.to_bandit_feature_vector()}", width, en))
+    lines.append(theme.footer(width, enabled=en))
+    print("\n".join(lines))
 
 
 def cmd_status(args) -> None:
@@ -321,9 +330,9 @@ def cmd_status(args) -> None:
         print("\nStopped watching.")
 
 
-def _render_status_file(data: dict) -> str:
-    sep = "=" * 70
-    dash = "-" * 70
+def _render_status_file(data: dict, enabled: Optional[bool] = None) -> str:
+    en = theme.color_enabled() if enabled is None else enabled
+    width = 70
     tasks = data.get("tasks", {})
     healing = data.get("self_healing", {})
     workers = data.get("workers", [])
@@ -343,64 +352,77 @@ def _render_status_file(data: dict) -> str:
     active = data.get("monitor_active", False)
 
     if session_active is False and session_error:
-        header = f"AGENTOR WATCH — ❌ SESSION CRASHED: {session_error[:40]}"
+        title, title_color = "AGENTOR WATCH — ❌ SESSION CRASHED", theme.RED
     elif session_active is False:
-        header = "AGENTOR WATCH — session ended (exited normally)"
+        title, title_color = "AGENTOR WATCH — session ended", theme.GRAY
     elif active:
-        header = "AGENTOR WATCH (cross-terminal)"
+        title, title_color = "AGENTOR WATCH (cross-terminal)", theme.GREEN
     else:
-        header = "AGENTOR WATCH — idle between actions, showing last known state"
+        title, title_color = "AGENTOR WATCH — idle, showing last known state", theme.YELLOW
 
-    lines = [
-        sep,
-        f"  {header:<48}{data.get('time', '')}   Profile: {data.get('profile', '?')}",
-    ]
+    lines = theme.header(theme.paint(title, title_color, enabled=en), data.get("time", ""), width, en)
     if session_active is False and session_error:
-        lines.append(f"  Full error: {session_error}")
-    lines += [
-        sep,
-        f"  RAM  {data.get('ram_free_mb', 0):.0f}/{data.get('ram_total_mb', 0):.0f} MB free   "
-        f"CPU {data.get('cpu_percent', 0):.1f}%   "
-        f"Battery {data.get('battery_percent', 0):.1f}% "
+        lines.append(theme.panel_line(theme.paint(f"Error: {session_error[:60]}", theme.RED, enabled=en), width, en))
+    lines.append(theme.panel_line(
+        f"Profile: {data.get('profile', '?')}", width, en))
+    lines.append(theme.divider(width, enabled=en))
+
+    ram_ratio = data.get("ram_free_ratio", 0.0)
+    cpu_ratio = data.get("cpu_percent", 0) / 100.0
+    batt_ratio = data.get("battery_percent", 0) / 100.0
+    lines.append(theme.panel_line(
+        f"RAM     [{theme.bar(ram_ratio, width=14, enabled=en)}] "
+        f"{data.get('ram_free_mb', 0):.0f}/{data.get('ram_total_mb', 0):.0f} MB free   "
+        f"CPU [{theme.bar(cpu_ratio, width=14, invert=True, enabled=en)}] {data.get('cpu_percent', 0):.1f}%",
+        width, en))
+    lines.append(theme.panel_line(
+        f"Battery [{theme.bar(batt_ratio, width=14, enabled=en)}] {data.get('battery_percent', 0):.1f}% "
         f"({'charging' if data.get('is_charging') else 'on battery'})   "
         f"Temp {data.get('cpu_temperature_c', 0):.1f}°C",
-        dash,
-        f"  Tasks  total={tasks.get('total', 0)}  pending={tasks.get('pending', 0)}  "
-        f"running={tasks.get('running', 0)}  completed={tasks.get('completed', 0)}  "
-        f"failed={tasks.get('failed', 0)}",
-        dash,
-        f"  Self-Healing  circuit-broken={healing.get('circuit_broken_domains', [])}  "
+        width, en))
+    lines.append(theme.divider(width, enabled=en))
+
+    failed = tasks.get("failed", 0)
+    lines.append(theme.panel_line(
+        f"Tasks  total={tasks.get('total', 0)}  pending={tasks.get('pending', 0)}  "
+        f"running={theme.paint(str(tasks.get('running', 0)), theme.GREEN, enabled=en)}  "
+        f"completed={theme.paint(str(tasks.get('completed', 0)), theme.GREEN, enabled=en)}  "
+        f"failed={theme.paint(str(failed), theme.RED, enabled=en) if failed else failed}",
+        width, en))
+    lines.append(theme.divider(width, enabled=en))
+    lines.append(theme.panel_line(
+        f"Self-Healing  circuit-broken={healing.get('circuit_broken_domains', [])}  "
         f"captcha_pending={healing.get('captcha_pending', 0)}  "
         f"locked_sessions={healing.get('locked_sessions', 0)}",
-        sep,
-    ]
+        width, en))
+    lines.append(theme.footer(width, enabled=en))
 
     current_action = data.get("current_action")
     if current_action:
-        lines += [f"  Main agent: {current_action}", sep]
+        lines += [theme.paint(f"  Main agent: {current_action}", theme.DIM, enabled=en)]
 
     agent_tree = data.get("agent_tree")
     if agent_tree:
-        lines.append("  AGENT TREE  (who registered whom - built at runtime, not declared upfront)")
-        lines.append(dash)
+        lines.append(theme.paint("  AGENT TREE  (who registered whom - built at runtime)", theme.BOLD, enabled=en))
         for node in agent_tree:
-            lines.extend(_render_tree_node(node, depth=0))
-        lines.append(sep)
+            lines.extend(_render_tree_node(node, depth=0, enabled=en))
     elif workers:
         # Fallback for a status file written before agent_tree existed.
-        id_w = max([len(w["worker_id"]) for w in workers] + [len("WORKER ID")])
-        lines.append(f"  {'WORKER ID':<{id_w}}  TYPE      STATUS   CURRENT TASK")
-        for w in workers:
-            status = "● busy" if w.get("busy") else "○ idle"
-            lines.append(f"  {w['worker_id']:<{id_w}}  {w['type']:<9} {status:<7}  {w.get('current_task') or '-'}")
-        lines.append(sep)
+        rows = [
+            [w["worker_id"], w["type"],
+             theme.paint("● busy", theme.GREEN, enabled=en) if w.get("busy") else theme.paint("○ idle", theme.GRAY, enabled=en),
+             w.get("current_task") or "-"]
+            for w in workers
+        ]
+        lines.extend(theme.table(["WORKER ID", "TYPE", "STATUS", "CURRENT TASK"], rows, enabled=en))
 
     return "\n".join(lines)
 
 
-def _render_tree_node(node: dict, depth: int) -> List[str]:
+def _render_tree_node(node: dict, depth: int, enabled: bool = True) -> List[str]:
     indent = "  " + "  " * depth + ("└─ " if depth else "")
-    status = "● RUNNING" if node.get("status") == "RUNNING" else "○ idle"
+    running = node.get("status") == "RUNNING"
+    status = theme.paint("● RUNNING", theme.GREEN, enabled=enabled) if running else theme.paint("○ idle", theme.GRAY, enabled=enabled)
     task = node.get("current_task") or "-"
     line = f"{indent}{node['agent_id']}  [{node.get('type', '?')}]  {status}  task={task}"
     measured = node.get("measured_resources")
@@ -408,10 +430,12 @@ def _render_tree_node(node: dict, depth: int) -> List[str]:
         # REAL psutil measurement (only ever set for an agent that spawned
         # a real OS subprocess) - marked "measured" so it's never confused
         # with a TaskNode's declared ram_mb/cpu_percent estimate.
-        line += f"  [measured: {measured.get('peak_ram_mb', 0):.1f}MB, {measured.get('avg_cpu_percent', 0):.1f}% CPU]"
+        line += theme.paint(
+            f"  [measured: {measured.get('peak_ram_mb', 0):.1f}MB, {measured.get('avg_cpu_percent', 0):.1f}% CPU]",
+            theme.DIM, enabled=enabled)
     out = [line]
     for child in node.get("children", []):
-        out.extend(_render_tree_node(child, depth + 1))
+        out.extend(_render_tree_node(child, depth + 1, enabled=enabled))
     return out
 
 
@@ -708,16 +732,17 @@ def cmd_history(args) -> None:
         print("ℹ️  No run history yet in this session. Try 'demo', 'run <file.json>', or 'llm' first.")
         return
 
-    sep = "─" * 72
-    print(sep)
-    print(f"  {'TIME':<10}{'CMD':<7}{'TASKS':<10}{'AGENTS':<10}{'ELAPSED':<10}STATUS")
-    print(sep)
+    en = theme.color_enabled()
+    rows = []
     for e in _RUN_HISTORY:
-        status = "✅ OK" if e["failed"] == 0 else f"⚠️  {e['failed']} failed"
-        tasks_str = f"{e['completed']}/{e['total_tasks']}"
-        elapsed_str = f"{e['elapsed_seconds']:.2f}s"
-        print(f"  {e['time']:<10}{e['command']:<7}{tasks_str:<10}{e['agents_breakdown']:<10}{elapsed_str:<10}{status}")
-    print(sep)
+        ok = e["failed"] == 0
+        status = theme.paint("✔ OK", theme.GREEN, enabled=en) if ok else theme.paint(f"⚠ {e['failed']} failed", theme.YELLOW, enabled=en)
+        rows.append([
+            e["time"], e["command"], f"{e['completed']}/{e['total_tasks']}",
+            e["agents_breakdown"], f"{e['elapsed_seconds']:.2f}s", status,
+        ])
+    for line in theme.table(["TIME", "CMD", "TASKS", "AGENTS", "ELAPSED", "STATUS"], rows, enabled=en):
+        print(line)
 
 
 def cmd_llm(args) -> None:
