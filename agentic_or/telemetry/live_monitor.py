@@ -330,12 +330,9 @@ class LiveMonitor:
             **self.extra_status,
         }
 
-        try:
-            STATUS_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            # Write-then-rename: a `watch` process reading concurrently
-            # never sees a half-written file.
-            tmp_path = STATUS_FILE_PATH.with_suffix(".tmp")
-            tmp_path.write_text(json.dumps(data))
-            tmp_path.replace(STATUS_FILE_PATH)
-        except OSError as e:
-            logging.getLogger(__name__).warning(f"Could not write status file {STATUS_FILE_PATH}: {e}")
+        # Merge (via write_status_fields) rather than overwrite the whole
+        # file: a SEPARATE process - `agentic-or guard` (agentic_or/guard/
+        # daemon.py) - may be writing its own "claude_code_agents" key into
+        # this same file concurrently. A blind overwrite here would win the
+        # race and erase it every cycle whenever both happen to run at once.
+        write_status_fields(**data)

@@ -416,6 +416,19 @@ def _render_status_file(data: dict, enabled: Optional[bool] = None) -> str:
         ]
         lines.extend(theme.table(["WORKER ID", "TYPE", "STATUS", "CURRENT TASK"], rows, enabled=en))
 
+    # Written by a SEPARATE process - `agentic-or guard` (see
+    # agentic_or/guard/daemon.py) - reporting an external tool-calling
+    # agent's (Claude Code) activity via its hooks. Shown here purely for
+    # visibility; `guard`'s /decision endpoint is the only place any of
+    # this can actually block anything, never this render function.
+    claude_agents = data.get("claude_code_agents")
+    if claude_agents:
+        if agent_tree or workers:
+            lines.append("")
+        lines.append(theme.paint("  CLAUDE CODE  (via agentic-or guard)", theme.BOLD, enabled=en))
+        for node in claude_agents:
+            lines.extend(_render_tree_node(node, depth=0, enabled=en))
+
     return "\n".join(lines)
 
 
@@ -465,6 +478,101 @@ def cmd_watch(args) -> None:
             time.sleep(interval)
     except KeyboardInterrupt:
         print("\nStopped watching.")
+
+
+def cmd_guard(args) -> None:
+    """Dispatch 'guard' [start] / 'guard status' / 'guard stop' / 'guard log'."""
+    action = getattr(args, "guard_action", None)
+    if action == "status":
+        cmd_guard_status(args)
+    elif action == "stop":
+        cmd_guard_stop(args)
+    elif action == "log":
+        cmd_guard_log(args)
+    else:
+        cmd_guard_start(args)
+
+
+def cmd_guard_start(args) -> None:
+    """
+    Start the `agentic-or guard` daemon - unlike every other command here,
+    this is meant to be left running (its own terminal, or a service
+    manager - or auto-started by the SessionStart hook, see
+    agentic_or/guard/hook_client.py), not a one-shot call. See
+    agentic_or/guard/daemon.py and docs/claude-code-guard.md for what it
+    does and how to wire Claude Code's hooks to it.
+    """
+    from agentic_or.guard.daemon import DEFAULT_PORT, run_guard
+    run_guard(port=getattr(args, "port", DEFAULT_PORT))
+
+
+def _guard_base_url(args) -> str:
+    from agentic_or.guard.daemon import DEFAULT_PORT
+    return f"http://127.0.0.1:{getattr(args, 'port', DEFAULT_PORT)}"
+
+
+def cmd_guard_status(args) -> None:
+    """Query the running guard daemon's /status - reports 'not running' rather than erroring if it's down."""
+    import urllib.request
+    url = _guard_base_url(args)
+    try:
+        with urllib.request.urlopen(f"{url}/status", timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        print(
+            f"🛡️  guard running — pid {data['pid']}  ·  up {data['uptime_seconds']:.0f}s  ·  "
+            f"{data['session_count']} known session(s)  ·  profile {data['profile']}  ·  {url}"
+        )
+    except Exception:
+        print(f"⭕ guard is not running on {url}.")
+        print("   Start it with: agentic-or guard")
+
+
+def cmd_guard_stop(args) -> None:
+    """POST /shutdown to the running guard daemon - a clean way to stop it from another terminal/process."""
+    import urllib.request
+    url = _guard_base_url(args)
+    try:
+        req = urllib.request.Request(f"{url}/shutdown", data=b"{}", method="POST")
+        urllib.request.urlopen(req, timeout=1.5)
+        print(f"🛑 Stop signal sent to the guard daemon at {url}.")
+    except Exception:
+        print(f"⭕ guard doesn't appear to be running on {url} - nothing to stop.")
+
+
+def cmd_guard_log(args) -> None:
+    """
+    Show the last N non-'allow' decisions (~/.agentic_or/guard_decisions.jsonl)
+    - "allow" is never logged there, only ask/deny, so this stays a short
+    list of "what actually got throttled/blocked", not a full audit trail.
+    """
+    from agentic_or.guard.daemon import DECISIONS_LOG_PATH
+    if not DECISIONS_LOG_PATH.exists():
+        print("ℹ️  No guard decisions logged yet (only 'ask'/'deny' decisions are logged, never 'allow').")
+        return
+
+    n = max(1, getattr(args, "n", 20))
+    en = theme.color_enabled()
+    rows = []
+    for line in DECISIONS_LOG_PATH.read_text(encoding="utf-8").splitlines()[-n:]:
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        decision = e.get("decision", "?")
+        color = theme.RED if decision == "deny" else theme.YELLOW
+        reason = e.get("reason", "")
+        rows.append([
+            e.get("time", "?"),
+            theme.paint(decision, color, enabled=en),
+            e.get("tool_name", "?"),
+            (e.get("session_id") or "?")[:8],
+            reason if len(reason) <= 60 else reason[:57] + "...",
+        ])
+    if not rows:
+        print("ℹ️  Log file exists but has no valid entries.")
+        return
+    for line in theme.table(["TIME", "DECISION", "TOOL", "SESSION", "REASON"], rows, enabled=en):
+        print(line)
 
 
 def cmd_ui(args) -> None:
@@ -856,6 +964,28 @@ def build_parser() -> argparse.ArgumentParser:
     ui_parser.add_argument("--port", type=int, default=8420, help="Local port to serve on (default: 8420)")
     ui_parser.add_argument("--no-browser", action="store_true", help="Don't auto-open a browser tab")
 
+    # guard command - persistent daemon governing an EXTERNAL tool-calling
+    # agent (Claude Code) via its hooks - see docs/claude-code-guard.md.
+    # Unlike every other subcommand, meant to be started once and left
+    # running, not invoked per one-shot task.
+    guard_parser = subparsers.add_parser(
+        "guard", help="Start (default) / check / stop the resource-governor daemon for Claude Code's hooks"
+    )
+    # --port lives ONLY here (not repeated on the "status"/"stop" subparsers
+    # below) - argparse subparsers share the same `dest`, so a subparser's
+    # own default would silently overwrite a value already set here. This
+    # does mean --port must come BEFORE the action word, e.g.
+    # `agentic-or guard --port 9000 status`.
+    guard_parser.add_argument("--port", type=int, default=8422, help="Local port to serve on (default: 8422)")
+    guard_sub = guard_parser.add_subparsers(dest="guard_action")
+
+    guard_sub.add_parser("start", help="(default) Start the daemon in the foreground - blocking")
+    guard_sub.add_parser("status", help="Check whether the daemon is running")
+    guard_sub.add_parser("stop", help="Stop a running daemon from another terminal")
+
+    guard_log_parser = guard_sub.add_parser("log", help="Show the last N logged ask/deny decisions")
+    guard_log_parser.add_argument("-n", type=int, default=20, help="How many entries to show (default: 20)")
+
     # repl command - explicit way to (re-)enter the interactive shell
     subparsers.add_parser("repl", help="Enter the interactive AgentOR shell")
 
@@ -880,6 +1010,8 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         cmd_watch(args)
     elif args.command == "ui":
         cmd_ui(args)
+    elif args.command == "guard":
+        cmd_guard(args)
     elif args.command == "repl" or args.command is None:
         from agentic_or.repl import run_repl
         run_repl(parser)

@@ -75,6 +75,7 @@ _HTML_PAGE = """<!doctype html>
   <div class="grid" id="metrics"></div>
   <div class="section"><div class="title">Self-Healing</div><div id="healing" class="sub"></div></div>
   <div class="section"><div class="title">Agent Tree</div><div class="tree" id="tree"><div class="empty">Waiting for data...</div></div></div>
+  <div class="section" id="claude-section" hidden><div class="title">Claude Code (via agentic-or guard)</div><div class="tree" id="claude-tree"></div></div>
 
 <script>
 function bar(ratio) {
@@ -147,6 +148,17 @@ async function poll() {
     document.getElementById("tree").innerHTML = tree.length
       ? tree.map(n => renderNode(n, 0)).join("")
       : '<div class="empty">No agents registered</div>';
+
+    // Written by a SEPARATE process (`agentic-or guard`) reporting Claude
+    // Code's own tool/subagent activity via its hooks - purely displayed
+    // here, this page never sends anything back to it (read-only, same as
+    // the rest of this dashboard).
+    const claudeSection = document.getElementById("claude-section");
+    const claudeTree = d.claude_code_agents || [];
+    claudeSection.hidden = claudeTree.length === 0;
+    if (claudeTree.length) {
+      document.getElementById("claude-tree").innerHTML = claudeTree.map(n => renderNode(n, 0)).join("");
+    }
 
   } catch (e) {
     dot.style.background = "var(--bad)";

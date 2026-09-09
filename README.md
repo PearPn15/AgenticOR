@@ -90,6 +90,17 @@ Skipping this is fine — browser tasks then run in simulation mode.
 
 To write your own agent, see [docs/custom-agents.md](docs/custom-agents.md) and the [my_agents/](my_agents/) folder.
 
+### Optional: govern Claude Code itself with AgenticOR
+
+```bash
+uv run agentic-or guard              # starts the resource-governor daemon (also auto-starts via a SessionStart hook)
+```
+
+Point Claude Code's own hooks at it (see [docs/claude-code-guard.md](docs/claude-code-guard.md) for the exact
+`settings.json` snippet) and AgenticOR's real machine telemetry starts gating Claude Code's own tool calls and
+subagents — not just its own workers. `agentic-or watch`/`ui` then show a "CLAUDE CODE" section alongside
+AgenticOR's own agent tree.
+
 ---
 
 ## Features
@@ -149,6 +160,14 @@ To write your own agent, see [docs/custom-agents.md](docs/custom-agents.md) and 
 - A complete, genuinely runnable example: a chat loop against a real LLM in which the model **decides its own action each turn** (search, run a command, fetch a page, delegate to a research sub-agent, ...) — not confined to a fixed, pre-programmed action catalog, much like a coding assistant deciding which tool to call.
 - Every action it decides on still passes through the full C++ scheduler and the safety guards above before it executes for real — the framework does not police *what* the agent decides, only guarantees that *how* it executes stays safe for the machine.
 
+### 🛡️ Resource governor for Claude Code (`agentic-or guard`)
+- Everywhere else in this project is deliberately **read-only** — `Orchestrator`/`LiveMonitor`/`watch`/`ui` observe, they never gate. `guard` is the one explicit exception: a persistent local daemon that lets an **external** tool-calling agent (Claude Code, via its own hooks) ask *"is it safe to run this tool right now?"* before it actually runs it, reusing the exact same `OOMGuard`/`ThermalBatteryGuard` real-machine thresholds that already govern AgenticOR's own workers.
+- Three-way decision, not just allow/deny: **`allow`** runs normally; **`ask`** triggers Claude Code's own permission prompt for policy throttles (thermal/battery caution, concurrency caps) that aren't immediate danger; **`deny`** is a hard block reserved for actual RAM crash risk, where waiting on a human answer isn't safe.
+- A real **concurrency cap** (not just an instantaneous resource snapshot) — the number of heavy tool calls (`Bash`/`WebFetch`/`WebSearch`) and subagents (`Task`, capped separately) already running, machine-wide, scaling with the same `ECO_SILENT`/`BALANCED`/`TURBO_SPEED` profile AgenticOR's own scheduler uses — so a burst of parallel subagents can't all get waved through individually and collectively tip the machine over.
+- A small fixed whitelist (`Read`, `Grep`, `Glob`, `TodoWrite`, ...) is **never** denied, so Claude Code always keeps enough capability to diagnose a problem and talk to you about it, even under real memory/thermal pressure.
+- **Fail-open by construction**: the hook client that talks to this daemon has a strict timeout and catches every exception — the daemon not running, crashing, or answering slowly is indistinguishable, from Claude Code's point of view, from this integration never having been installed. It never hangs and never wrongly blocks a tool call.
+- Auto-starts via a `SessionStart` hook, cleans up its own dashboard entries via `SessionEnd` (plus a 1-hour stale-session fallback), and keeps a small rolling log of every `ask`/`deny` it has issued (`agentic-or guard log`) — see [docs/claude-code-guard.md](docs/claude-code-guard.md) for the full design and the exact hook wiring.
+
 ---
 
 ## Architecture overview
@@ -169,7 +188,18 @@ Worker Pools + Self-Healing Daemons
     │
     ▼
 Cross-process monitoring (watch)  +  Lightweight dashboard (ui)
+    ▲
+    │  (same shared status file)
+    │
+agentic-or guard  (persistent daemon, separate process)
+    ▲
+    │  PreToolUse / PostToolUse / SubagentStart|Stop / SessionStart|End hooks
+    │
+Claude Code  (an EXTERNAL tool-calling agent - not part of AgenticOR itself)
 ```
+
+`guard` is the only component in this diagram that gates something instead of just observing it — see
+[docs/claude-code-guard.md](docs/claude-code-guard.md).
 
 For a layer-by-layer description, the full diagram and the design decisions behind them, see [Pipeline.md](Pipeline.md).
 
@@ -190,6 +220,7 @@ For a layer-by-layer description, the full diagram and the design decisions behi
 | Lightweight dashboard (`ui`) | ✅ Implemented |
 | Autonomous main agent (bundled example) | ✅ Implemented, runs against real LLMs |
 | Real resource measurement for subprocess-backed agents | ✅ Implemented |
+| Claude Code resource governor (`agentic-or guard`) | ✅ Implemented, fail-open, tested end-to-end |
 | Durable checkpoint store | ❌ Not yet — state lives in memory only |
 | External message broker (NATS JetStream, ...) | ❌ Not yet — single-process in-memory queue |
 
@@ -200,5 +231,6 @@ A fuller table with explanations is in [Pipeline.md](Pipeline.md).
 ## Documentation
 
 - **Writing your own agents (plugin contract, `agents add`, session vs. persisted modes)**: [docs/custom-agents.md](docs/custom-agents.md)
+- **Governing Claude Code with `agentic-or guard`** (hook wiring, decision policy, concurrency caps, lifecycle): [docs/claude-code-guard.md](docs/claude-code-guard.md)
 - **Runnable example agents**: [my_agents/](my_agents/) (see [my_agents/README.md](my_agents/README.md))
 - **Minimal example**: [examples/custom_agent.py](examples/custom_agent.py)

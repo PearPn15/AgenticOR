@@ -45,6 +45,7 @@ _MENU_SECTIONS = [
         ("history", "Show summaries of runs already completed in this session"),
         ("watch", "Watch ANOTHER agentic-or process's live run, from this terminal"),
         ("ui [--port N] [--no-browser]", "Open a lightweight local web dashboard (browser-based watch)"),
+        ("guard [--port N]", "Start the resource-governor daemon for Claude Code's hooks (blocking)"),
     ]),
     ("Shell", [
         ("clear", "Clear the screen"),
