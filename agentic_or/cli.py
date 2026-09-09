@@ -529,7 +529,16 @@ def cmd_run(args) -> None:
 
 def cmd_demo(args) -> None:
     """Run the built-in 11-task demonstration."""
-    import demo
+    try:
+        import demo
+    except ModuleNotFoundError:
+        # demo.py is development scaffolding kept out of the published
+        # package - every other command works without it.
+        print("❌ 'demo' needs demo.py at the repo root, which isn't part of this "
+              "installation.", file=sys.stderr)
+        print("   Try 'run <file.json>' with your own tasks, or 'llm --provider <name>'.",
+              file=sys.stderr)
+        return
     t0 = time.time()
     orchestrator = asyncio.run(demo.main(enable_monitor=args.monitor))
     _remember_orchestrator(orchestrator)
